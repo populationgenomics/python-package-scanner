@@ -134,6 +134,22 @@ permissions:
   pull-requests: write
 ```
 
+The `comment-on-pr` feature requires the workflow to trigger on `pull_request`
+events. The PR number is read from `github.event.pull_request.number`, which
+is only available on `pull_request` triggers — not `push`.
+
+A common pattern for running on both PRs and main:
+
+```yaml
+on:
+  push:
+    branches: [main]
+  pull_request:
+```
+
+This avoids double runs — `push` fires only for `main`, `pull_request` fires
+for PRs.
+
 ## Local usage
 
 ```bash
