@@ -56,6 +56,7 @@ runs:
         INPUT_IGNORE_PACKAGES: ${{ inputs.ignore-packages }}
       run: |
         SCANNER_DIR="${{ github.action_path }}"
+        export PYTHONPATH="$SCANNER_DIR:${PYTHONPATH:-}"
 
         ARGS=(--mode "$INPUT_MODE" --path "$INPUT_PATH" --format markdown)
         if [ -n "$INPUT_IGNORE_IDS" ]; then
@@ -66,7 +67,7 @@ runs:
         fi
 
         set +e
-        REPORT=$(python "$SCANNER_DIR/scanner/cli.py" "${ARGS[@]}" 2>"$RUNNER_TEMP/scanner_stderr.txt")
+        REPORT=$(python -m scanner.cli "${ARGS[@]}" 2>"$RUNNER_TEMP/scanner_stderr.txt")
         EXIT_CODE=$?
         set -e
 
