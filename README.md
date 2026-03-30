@@ -1,5 +1,9 @@
 # python-package-scanner
 
+> **Beta** — This project is under active development. APIs, inputs, and output
+> formats may change without notice. Use with caution in production workflows
+> and pin to a specific commit hash.
+
 A GitHub Action that scans Python dependencies for known vulnerabilities and
 traces each finding back through the dependency chain to the direct dependency
 that introduced it.
@@ -38,13 +42,13 @@ Found 3 vulnerabilities in 2 packages
 ### Basic (uv project)
 
 ```yaml
-- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v1
+- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v0
 ```
 
 ### With options
 
 ```yaml
-- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v1
+- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v0
   with:
     mode: auto              # auto | uv | pip
     fail-on-vulns: true     # exit 1 if vulnerabilities found
@@ -60,7 +64,7 @@ Found 3 vulnerabilities in 2 packages
   with:
     python-version: "3.12"
 - run: pip install -r requirements.txt
-- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v1
+- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v0
   with:
     mode: pip
 ```
@@ -68,7 +72,7 @@ Found 3 vulnerabilities in 2 packages
 ### Monorepo (scan a subdirectory)
 
 ```yaml
-- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v1
+- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v0
   with:
     path: services/api
 ```
@@ -76,7 +80,7 @@ Found 3 vulnerabilities in 2 packages
 ### Use the report in a later step
 
 ```yaml
-- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v1
+- uses: populationgenomics/python-package-scanner@<COMMIT_SHA> # v0
   id: scan
   with:
     fail-on-vulns: false
@@ -137,6 +141,18 @@ python -m scanner.cli --mode uv --path /path/to/project
 python -m scanner.cli --mode pip --format json
 python -m scanner.cli --ignore-packages protobuf --ignore-ids CVE-2026-0994
 ```
+
+## Status
+
+This is a **beta release**. Known limitations:
+
+- Duplicate CVE entries may appear when multiple vulnerability databases
+  (GHSA, PYSEC) track the same issue
+- pip mode depends on packages being installed in the current environment
+- Version comparison uses a simple numeric parser that may not handle all
+  PEP 440 edge cases (epochs, pre-release ordering)
+
+Contributions and bug reports are welcome.
 
 ## License
 
