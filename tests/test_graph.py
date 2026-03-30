@@ -92,10 +92,23 @@ class TestParseUvLock:
         chain = graph.trace_chain("urllib3")
         assert chain == ["requests", "urllib3"]
 
-    def test_dev_deps_included(self, graph: DependencyGraph):
-        # pytest is a dev dep — it should be in packages but NOT a direct dep
-        # (dev-dependencies are on the root package, not in its dependencies list)
+    def test_dev_deps_tracked(self, graph: DependencyGraph):
         assert "pytest" in graph.packages
+        assert "pytest" in graph.dev_deps
+        assert "pytest" not in graph.direct_deps
+
+    def test_dev_dep_is_dev_only(self, graph: DependencyGraph):
+        assert graph.is_dev_only("pytest") is True
+        assert graph.is_dev_only("iniconfig") is True  # transitive dev dep
+
+    def test_runtime_dep_not_dev(self, graph: DependencyGraph):
+        assert graph.is_dev_only("flask") is False
+        assert graph.is_dev_only("werkzeug") is False
+
+    def test_trace_chain_through_dev(self, graph: DependencyGraph):
+        chain = graph.trace_chain("iniconfig")
+        assert chain[0] == "pytest"
+        assert chain[-1] == "iniconfig"
 
     def test_unknown_package(self, graph: DependencyGraph):
         chain = graph.trace_chain("nonexistent")

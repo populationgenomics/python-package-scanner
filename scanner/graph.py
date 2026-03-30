@@ -16,6 +16,7 @@ class PackageInfo:
     version: str
     dependencies: list[str] = field(default_factory=list)
     is_direct: bool = False
+    is_dev: bool = False
 
 
 @dataclass
@@ -24,16 +25,19 @@ class DependencyGraph:
 
     packages: dict[str, PackageInfo]  # normalized name -> PackageInfo
     reverse_map: dict[str, list[str]]  # package -> list of parents
-    direct_deps: set[str]  # normalized names of direct dependencies
+    direct_deps: set[str]  # normalized names of direct runtime dependencies
+    dev_deps: set[str] = field(default_factory=set)  # direct dev dependencies
 
     def trace_chain(self, package: str) -> list[str]:
         """Find shortest path from a direct dependency to the given package.
 
-        Returns a list like ["flask", "werkzeug", "markupsafe"] meaning
-        flask -> werkzeug -> markupsafe.
+        Searches runtime deps first, then dev deps. Returns a list like
+        ["flask", "werkzeug", "markupsafe"] meaning flask -> werkzeug -> markupsafe.
         """
         package = normalize(package)
-        if package in self.direct_deps:
+        all_direct = self.direct_deps | self.dev_deps
+
+        if package in all_direct:
             return [package]
 
         # BFS from package upward through reverse_map to find a direct dep
@@ -49,14 +53,27 @@ class DependencyGraph:
                     continue
                 visited.add(parent)
                 new_path = path + [parent]
-                if parent in self.direct_deps:
-                    # Return in top-down order: direct dep -> ... -> target
+                if parent in all_direct:
                     new_path.reverse()
                     return new_path
                 queue.append(new_path)
 
         # No path found to a direct dep — return just the package
         return [package]
+
+    def is_dev_only(self, package: str) -> bool:
+        """Check if a package is only reachable through dev dependencies."""
+        package = normalize(package)
+        if package in self.direct_deps:
+            return False
+        if package in self.dev_deps:
+            return True
+
+        chain = self.trace_chain(package)
+        if not chain:
+            return False
+        root = chain[0]
+        return root in self.dev_deps and root not in self.direct_deps
 
 
 def normalize(name: str) -> str:
@@ -98,16 +115,32 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
             dependencies=deps,
         )
 
-    # Direct deps are the runtime dependencies of root packages
+    # Direct runtime deps from root packages
     direct_deps: set[str] = set()
     for root in root_names:
         if root in packages:
             direct_deps.update(packages[root].dependencies)
 
-    # Mark direct deps
+    # Dev deps from root packages
+    dev_deps: set[str] = set()
+    for pkg in data.get("package", []):
+        name = normalize(pkg["name"])
+        if name not in root_names:
+            continue
+        for _group, deps in pkg.get("dev-dependencies", {}).items():
+            for d in deps:
+                dev_deps.add(normalize(d["name"]))
+
+    # Remove overlap — if a package is both runtime and dev, treat as runtime
+    dev_deps -= direct_deps
+
+    # Mark flags
     for dep_name in direct_deps:
         if dep_name in packages:
             packages[dep_name].is_direct = True
+    for dep_name in dev_deps:
+        if dep_name in packages:
+            packages[dep_name].is_dev = True
 
     # Build reverse map (who depends on whom)
     reverse_map: dict[str, list[str]] = {}
@@ -123,6 +156,7 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
         packages=packages,
         reverse_map=reverse_map,
         direct_deps=direct_deps,
+        dev_deps=dev_deps,
     )
 
 

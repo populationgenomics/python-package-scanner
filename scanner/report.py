@@ -20,6 +20,7 @@ class Finding:
     fixed_versions: list[str]
     chain: list[str]
     status: str  # "fixable", "blocked", "ignored"
+    is_dev: bool = False
 
 
 def build_findings(
@@ -51,6 +52,7 @@ def build_findings(
             status = "blocked"
 
         chain = graph.trace_chain(vuln.package)
+        is_dev = graph.is_dev_only(vuln.package)
 
         findings.append(
             Finding(
@@ -62,6 +64,7 @@ def build_findings(
                 fixed_versions=vuln.fixed_versions,
                 chain=chain,
                 status=status,
+                is_dev=is_dev,
             )
         )
 
@@ -109,7 +112,7 @@ def generate_markdown(findings: list[Finding]) -> str:
 
         fix_display = ", ".join(f.fixed_versions) if f.fixed_versions else "None"
 
-        chain_display = _format_chain(f.chain, f.status)
+        chain_display = _format_chain(f.chain, f.status, f.is_dev)
 
         lines.append(
             f"| {f.package} | {f.version} | {vuln_display} | {fix_display} | {chain_display} |"
@@ -118,6 +121,7 @@ def generate_markdown(findings: list[Finding]) -> str:
     # Summary
     fixable = sum(1 for f in active if f.status == "fixable")
     blocked = sum(1 for f in active if f.status == "blocked")
+    dev_count = sum(1 for f in active if f.is_dev)
 
     lines.append("")
     lines.append("### Summary")
@@ -125,18 +129,22 @@ def generate_markdown(findings: list[Finding]) -> str:
         lines.append(f"- {fixable} fixable via dependency upgrade")
     if blocked:
         lines.append(f"- {blocked} blocked by upstream constraints")
+    if dev_count:
+        lines.append(f"- {dev_count} in dev dependencies only")
     if ignored:
         lines.append(f"- {len(ignored)} ignored")
 
     return "\n".join(lines)
 
 
-def _format_chain(chain: list[str], status: str) -> str:
+def _format_chain(chain: list[str], status: str, is_dev: bool = False) -> str:
     """Format a dependency chain for display."""
+    dev_suffix = " (dev)" if is_dev else ""
+
     if len(chain) <= 1:
         pkg = chain[0] if chain else "unknown"
         if status == "blocked":
-            return f"**{pkg}** (pinned, blocked)"
-        return pkg
+            return f"**{pkg}** (pinned, blocked){dev_suffix}"
+        return f"{pkg}{dev_suffix}"
 
-    return " > ".join(chain)
+    return " > ".join(chain) + dev_suffix

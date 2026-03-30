@@ -46,6 +46,12 @@ def main(argv: list[str] | None = None) -> int:
         dest="output_format",
         help="Output format (default: markdown)",
     )
+    parser.add_argument(
+        "--exclude-dev",
+        action="store_true",
+        default=False,
+        help="Exclude dev dependencies from the scan",
+    )
 
     args = parser.parse_args(argv)
     project_path = Path(args.path)
@@ -82,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     packages_to_query = {
         name: (info.name, info.version)
         for name, info in graph.packages.items()
+        if not (args.exclude_dev and graph.is_dev_only(name))
     }
     osv_results = query_osv(
         packages_to_query,

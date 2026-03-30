@@ -29,6 +29,10 @@ inputs:
     description: "Comma-separated package names to skip"
     required: false
     default: ""
+  exclude-dev:
+    description: "Exclude dev dependencies from the scan"
+    required: false
+    default: "false"
 
 outputs:
   vuln-count:
@@ -54,6 +58,7 @@ runs:
         INPUT_PATH: ${{ inputs.path }}
         INPUT_IGNORE_IDS: ${{ inputs.ignore-ids }}
         INPUT_IGNORE_PACKAGES: ${{ inputs.ignore-packages }}
+        INPUT_EXCLUDE_DEV: ${{ inputs.exclude-dev }}
       run: |
         SCANNER_DIR="${{ github.action_path }}"
         export PYTHONPATH="$SCANNER_DIR:${PYTHONPATH:-}"
@@ -64,6 +69,9 @@ runs:
         fi
         if [ -n "$INPUT_IGNORE_PACKAGES" ]; then
           ARGS+=(--ignore-packages "$INPUT_IGNORE_PACKAGES")
+        fi
+        if [ "$INPUT_EXCLUDE_DEV" = "true" ]; then
+          ARGS+=(--exclude-dev)
         fi
 
         set +e
