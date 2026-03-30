@@ -1,0 +1,53 @@
+version = 1
+requires-python = ">=3.11"
+
+[[package]]
+name = "workspace-root"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "service-a" },
+    { name = "service-b" },
+]
+
+[[package]]
+name = "service-a"
+version = "0.1.0"
+source = { editable = "packages/service-a" }
+dependencies = [
+    { name = "requests" },
+]
+
+[[package]]
+name = "service-b"
+version = "0.1.0"
+source = { editable = "packages/service-b" }
+dependencies = [
+    { name = "flask" },
+]
+
+[[package]]
+name = "requests"
+version = "2.31.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "urllib3" },
+]
+
+[[package]]
+name = "urllib3"
+version = "2.0.7"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "flask"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "werkzeug" },
+]
+
+[[package]]
+name = "werkzeug"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }

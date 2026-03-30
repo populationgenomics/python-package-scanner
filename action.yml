@@ -1,0 +1,119 @@
+name: "Python Package Scanner"
+description: "Scan Python dependencies for vulnerabilities with dependency chain tracing"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  mode:
+    description: "Detection mode: auto, uv, or pip"
+    required: false
+    default: "auto"
+  path:
+    description: "Path to directory containing uv.lock or requirements.txt"
+    required: false
+    default: "."
+  fail-on-vulns:
+    description: "Exit with failure if vulnerabilities found"
+    required: false
+    default: "true"
+  comment-on-pr:
+    description: "Post/update PR comment with report"
+    required: false
+    default: "true"
+  ignore-ids:
+    description: "Comma-separated vulnerability IDs to ignore"
+    required: false
+    default: ""
+  ignore-packages:
+    description: "Comma-separated package names to skip"
+    required: false
+    default: ""
+
+outputs:
+  vuln-count:
+    description: "Number of vulnerabilities found"
+    value: ${{ steps.scan.outputs.vuln-count }}
+  report:
+    description: "Markdown report content"
+    value: ${{ steps.scan.outputs.report }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: ">=3.11"
+
+    - name: Run scanner
+      id: scan
+      shell: bash
+      env:
+        INPUT_MODE: ${{ inputs.mode }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_IGNORE_IDS: ${{ inputs.ignore-ids }}
+        INPUT_IGNORE_PACKAGES: ${{ inputs.ignore-packages }}
+      run: |
+        SCANNER_DIR="${{ github.action_path }}"
+
+        ARGS=(--mode "$INPUT_MODE" --path "$INPUT_PATH" --format markdown)
+        if [ -n "$INPUT_IGNORE_IDS" ]; then
+          ARGS+=(--ignore-ids "$INPUT_IGNORE_IDS")
+        fi
+        if [ -n "$INPUT_IGNORE_PACKAGES" ]; then
+          ARGS+=(--ignore-packages "$INPUT_IGNORE_PACKAGES")
+        fi
+
+        set +e
+        REPORT=$(python "$SCANNER_DIR/scanner/cli.py" "${ARGS[@]}" 2>"$RUNNER_TEMP/scanner_stderr.txt")
+        EXIT_CODE=$?
+        set -e
+
+        # Print any warnings to the log
+        if [ -s "$RUNNER_TEMP/scanner_stderr.txt" ]; then
+          cat "$RUNNER_TEMP/scanner_stderr.txt" >&2
+        fi
+
+        # Count vulns from exit code (0 = clean, 1 = vulns found)
+        if [ $EXIT_CODE -eq 0 ]; then
+          VULN_COUNT=0
+        else
+          # Extract count from report header "Found N vulnerabilities"
+          VULN_COUNT=$(echo "$REPORT" | grep -oP 'Found \K\d+' || echo "0")
+        fi
+
+        # Set outputs
+        echo "vuln-count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
+
+        # Use a delimiter for multiline output
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        echo "report<<$EOF" >> "$GITHUB_OUTPUT"
+        echo "$REPORT" >> "$GITHUB_OUTPUT"
+        echo "$EOF" >> "$GITHUB_OUTPUT"
+
+        # Print report to log
+        echo "$REPORT"
+
+    - name: Post PR comment
+      if: >-
+        inputs.comment-on-pr == 'true'
+        && github.event_name == 'pull_request'
+        && steps.scan.outputs.vuln-count != '0'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPORT: ${{ steps.scan.outputs.report }}
+      run: |
+        bash "${{ github.action_path }}/scripts/pr-comment.sh" \
+          "${{ github.repository }}" \
+          "${{ github.event.pull_request.number }}"
+
+    - name: Fail on vulnerabilities
+      if: inputs.fail-on-vulns == 'true' && steps.scan.outputs.vuln-count != '0'
+      shell: bash
+      env:
+        VULN_COUNT: ${{ steps.scan.outputs.vuln-count }}
+      run: |
+        echo "::error::Found ${VULN_COUNT} vulnerabilities"
+        exit 1
