@@ -54,18 +54,17 @@ class TestBuildFindings:
         assert findings[0].status == "fixable"
         assert findings[0].chain == ["flask", "werkzeug"]
 
-    def test_blocked_direct(self):
-        graph = _make_graph()
-        vulns = [_make_vuln("requests", fixed=["3.0.0"])]
-        findings = build_findings(vulns, graph)
-        assert len(findings) == 1
-        # Direct dep with a fix — chain is length 1, so "blocked"
-        assert findings[0].status == "blocked"
-
-    def test_blocked_no_fix(self):
+    def test_no_fix_available(self):
         graph = _make_graph()
         vulns = [_make_vuln("werkzeug", fixed=[])]
         findings = build_findings(vulns, graph)
+        assert findings[0].status == "no-fix"
+
+    def test_blocked_direct_dep_with_fix(self):
+        graph = _make_graph()
+        vulns = [_make_vuln("requests", fixed=["3.0.0"])]
+        findings = build_findings(vulns, graph)
+        # Direct dep with a fix — chain is length 1, so "blocked" (pinned)
         assert findings[0].status == "blocked"
 
     def test_ignored_by_id(self):
@@ -113,22 +112,38 @@ class TestGenerateMarkdown:
         assert "flask > werkzeug" in md
         assert "1 fixable via dependency upgrade" in md
 
-    def test_blocked_finding(self):
+    def test_pinned_finding(self):
         findings = [
             Finding(
-                package="protobuf",
-                version="3.20.2",
+                package="tornado",
+                version="6.5.4",
                 vuln_id="GHSA-5678",
                 aliases=[],
                 summary="Test",
-                fixed_versions=[],
-                chain=["protobuf"],
+                fixed_versions=["6.5.5"],
+                chain=["tornado"],
                 status="blocked",
             )
         ]
         md = generate_markdown(findings)
-        assert "**protobuf** (pinned, blocked)" in md
-        assert "1 blocked by upstream constraints" in md
+        assert "**tornado** (pinned)" in md
+        assert "1 pinned" in md
+
+    def test_no_fix_finding(self):
+        findings = [
+            Finding(
+                package="pygments",
+                version="2.19.2",
+                vuln_id="GHSA-9999",
+                aliases=[],
+                summary="Test",
+                fixed_versions=[],
+                chain=["mkdocs", "pygments"],
+                status="no-fix",
+            )
+        ]
+        md = generate_markdown(findings)
+        assert "no fix available" in md
 
     def test_ignored_excluded_from_count(self):
         findings = [

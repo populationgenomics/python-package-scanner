@@ -19,7 +19,7 @@ class Finding:
     summary: str
     fixed_versions: list[str]
     chain: list[str]
-    status: str  # "fixable", "blocked", "ignored"
+    status: str  # "fixable", "blocked", "no-fix", "ignored"
     is_dev: bool = False
 
 
@@ -41,15 +41,14 @@ def build_findings(
             status = "ignored"
         elif vuln.package in ignore_packages:
             status = "ignored"
-        elif vuln.fixed_versions:
-            # Has a fix available — check if chain is blocked
+        elif not vuln.fixed_versions:
+            status = "no-fix"
+        else:
             chain = graph.trace_chain(vuln.package)
             if _is_chain_blocked(chain, graph):
                 status = "blocked"
             else:
                 status = "fixable"
-        else:
-            status = "blocked"
 
         chain = graph.trace_chain(vuln.package)
         is_dev = graph.is_dev_only(vuln.package)
@@ -118,19 +117,38 @@ def generate_markdown(findings: list[Finding]) -> str:
             f"| {f.package} | {f.version} | {vuln_display} | {fix_display} | {chain_display} |"
         )
 
-    # Summary
-    fixable = sum(1 for f in active if f.status == "fixable")
-    blocked = sum(1 for f in active if f.status == "blocked")
-    dev_count = sum(1 for f in active if f.is_dev)
+    # Summary — mutually exclusive categories that add up to total
+    def _count(status: str, dev: bool | None = None) -> int:
+        return sum(
+            1 for f in active
+            if f.status == status and (dev is None or f.is_dev == dev)
+        )
+
+    runtime_fixable = _count("fixable", dev=False)
+    runtime_blocked = _count("blocked", dev=False)
+    runtime_nofix = _count("no-fix", dev=False)
+    dev_fixable = _count("fixable", dev=True)
+    dev_blocked = _count("blocked", dev=True)
+    dev_nofix = _count("no-fix", dev=True)
+    dev_total = dev_fixable + dev_blocked + dev_nofix
 
     lines.append("")
     lines.append("### Summary")
-    if fixable:
-        lines.append(f"- {fixable} fixable via dependency upgrade")
-    if blocked:
-        lines.append(f"- {blocked} blocked by upstream constraints")
-    if dev_count:
-        lines.append(f"- {dev_count} in dev dependencies only")
+    if runtime_fixable:
+        lines.append(f"- {runtime_fixable} fixable via dependency upgrade")
+    if runtime_blocked:
+        lines.append(f"- {runtime_blocked} pinned (fix available, requires manual upgrade)")
+    if runtime_nofix:
+        lines.append(f"- {runtime_nofix} no fix available")
+    if dev_total:
+        detail = []
+        if dev_fixable:
+            detail.append(f"{dev_fixable} fixable")
+        if dev_blocked:
+            detail.append(f"{dev_blocked} pinned")
+        if dev_nofix:
+            detail.append(f"{dev_nofix} no fix")
+        lines.append(f"- {dev_total} in dev dependencies only ({', '.join(detail)})")
     if ignored:
         lines.append(f"- {len(ignored)} ignored")
 
@@ -139,12 +157,17 @@ def generate_markdown(findings: list[Finding]) -> str:
 
 def _format_chain(chain: list[str], status: str, is_dev: bool = False) -> str:
     """Format a dependency chain for display."""
-    dev_suffix = " (dev)" if is_dev else ""
+    tags: list[str] = []
+    if status == "blocked":
+        tags.append("pinned")
+    elif status == "no-fix":
+        tags.append("no fix available")
+    if is_dev:
+        tags.append("dev")
+    suffix = f" ({', '.join(tags)})" if tags else ""
 
     if len(chain) <= 1:
         pkg = chain[0] if chain else "unknown"
-        if status == "blocked":
-            return f"**{pkg}** (pinned, blocked){dev_suffix}"
-        return f"{pkg}{dev_suffix}"
+        return f"**{pkg}**{suffix}"
 
-    return " > ".join(chain) + dev_suffix
+    return " > ".join(chain) + suffix
