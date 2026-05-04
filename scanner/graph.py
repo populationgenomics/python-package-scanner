@@ -15,6 +15,11 @@ class PackageInfo:
     name: str
     version: str
     dependencies: list[str] = field(default_factory=list)
+    # Per-child version specifier. Only populated for the root/workspace
+    # packages, since uv.lock doesn't record specifiers for transitive deps.
+    # Transitive specs are fetched from PyPI by scanner.constraints when
+    # needed for blocked-upstream classification.
+    dep_specs: dict[str, str] = field(default_factory=dict)
     is_direct: bool = False
     is_dev: bool = False
 
@@ -27,6 +32,10 @@ class DependencyGraph:
     reverse_map: dict[str, list[str]]  # package -> list of parents
     direct_deps: set[str]  # normalized names of direct runtime dependencies
     dev_deps: set[str] = field(default_factory=set)  # direct dev dependencies
+    # Specifiers from the root project (typically pyproject.toml) on each direct
+    # dep, e.g. {"hail": "~=0.2.137"}. Preserved separately so they survive the
+    # removal of root packages from `packages`.
+    root_specs: dict[str, str] = field(default_factory=dict)
 
     def trace_chain(self, package: str) -> list[str]:
         """Find shortest path from a direct dependency to the given package.
@@ -109,10 +118,23 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
         # Collect runtime dependencies
         deps = [normalize(d["name"]) for d in pkg.get("dependencies", [])]
 
+        # For root/workspace packages, uv.lock embeds full requires-dist with
+        # specifiers under [package.metadata]. Capture those so we can detect
+        # caps in pyproject.toml without a PyPI fetch.
+        dep_specs: dict[str, str] = {}
+        if is_root or is_editable:
+            metadata = pkg.get("metadata") or {}
+            for entry in metadata.get("requires-dist") or []:
+                child = normalize(entry.get("name", ""))
+                spec = (entry.get("specifier") or "").strip()
+                if child and spec:
+                    dep_specs[child] = spec
+
         packages[name] = PackageInfo(
             name=name,
             version=version,
             dependencies=deps,
+            dep_specs=dep_specs,
         )
 
     # Direct runtime deps from root packages
@@ -148,7 +170,17 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
         for dep in info.dependencies:
             reverse_map.setdefault(dep, []).append(name)
 
-    # Remove root packages from the scannable set — they're not real packages
+    # Capture root-level specifiers before we pop the root packages.
+    root_specs: dict[str, str] = {}
+    for root in root_names:
+        info = packages.get(root)
+        if info:
+            root_specs.update(info.dep_specs)
+
+    # Remove root packages from the scannable set — they're not real packages.
+    # Root names are intentionally preserved as parents in reverse_map so that
+    # trace_chain() and build_findings() can recognise direct deps via their
+    # parent chain.
     for root in root_names:
         packages.pop(root, None)
 
@@ -157,6 +189,7 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
         reverse_map=reverse_map,
         direct_deps=direct_deps,
         dev_deps=dev_deps,
+        root_specs=root_specs,
     )
 
 
@@ -180,23 +213,33 @@ def parse_pip_environment(
     """
     packages: dict[str, PackageInfo] = {}
 
+    # Local import to avoid a hard cycle with constraints which imports normalize.
+    from scanner.constraints import parse_requires_dist
+
     for dist in importlib.metadata.distributions():
         meta = dist.metadata
         name = normalize(meta["Name"])
         version = meta["Version"]
 
-        # Parse Requires-Dist for dependencies
         deps: list[str] = []
+        dep_specs: dict[str, str] = {}
         requires = dist.metadata.get_all("Requires-Dist") or []
         for req_str in requires:
-            # Skip extras-only dependencies
-            if "extra ==" in req_str:
+            child, spec, marker = parse_requires_dist(req_str)
+            if not child:
                 continue
-            m = _REQUIRES_DIST_RE.match(req_str)
-            if m:
-                deps.append(normalize(m.group(1)))
+            if marker and "extra ==" in marker:
+                continue
+            deps.append(child)
+            if spec:
+                dep_specs.setdefault(child, spec)
 
-        packages[name] = PackageInfo(name=name, version=version, dependencies=deps)
+        packages[name] = PackageInfo(
+            name=name,
+            version=version,
+            dependencies=deps,
+            dep_specs=dep_specs,
+        )
 
     # Determine direct dependencies
     direct_deps: set[str] = set()
