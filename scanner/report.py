@@ -287,9 +287,7 @@ def _cve_list(findings: list[Finding]) -> str:
         if i not in seen:
             seen.add(i)
             unique.append(i)
-    if len(unique) <= 3:
-        return ", ".join(unique)
-    return f"{', '.join(unique[:2])}, +{len(unique) - 2} more"
+    return ", ".join(unique)
 
 
 def _section_actionable(groups: dict[str, list[Finding]]) -> list[str]:

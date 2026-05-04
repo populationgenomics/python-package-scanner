@@ -232,12 +232,11 @@ class TestGenerateMarkdown:
         assert "CVE-2024-9999" in md
         assert "GHSA-xxxx" not in md
 
-    def test_multiple_cves_collapsed(self):
+    def test_multiple_cves_listed_in_full(self):
         findings = [
             self._fixable(package="aiohttp", chain=["hail", "aiohttp"], aliases=[f"CVE-2026-{i}"])
             for i in range(5)
         ]
-        # All 5 should appear in the same row, with a "+N more" tail
         md = generate_markdown(findings)
-        # 5 CVEs > 3 → expect "+3 more"
-        assert "+3 more" in md
+        for i in range(5):
+            assert f"CVE-2026-{i}" in md
