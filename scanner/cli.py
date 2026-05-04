@@ -8,6 +8,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+from scanner.constraints import fetch_constraints
 from scanner.graph import normalize, parse_pip_environment, parse_uv_lock
 from scanner.osv import query_osv
 from scanner.report import build_findings, generate_markdown
@@ -51,6 +52,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         default=False,
         help="Exclude dev dependencies from the scan",
+    )
+    parser.add_argument(
+        "--no-constraints",
+        action="store_true",
+        default=False,
+        help="Skip PyPI constraint fetching (faster, but loses blocked-upstream classification)",
     )
 
     args = parser.parse_args(argv)
@@ -101,11 +108,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Warning: {err}", file=sys.stderr)
 
     # Build findings and generate report
+    constraints_provider = None if args.no_constraints else fetch_constraints
     findings = build_findings(
         osv_results.vulnerabilities,
         graph,
         ignore_ids=ignore_ids,
         ignore_packages=ignore_packages,
+        constraints_provider=constraints_provider,
     )
 
     if args.output_format == "json":
