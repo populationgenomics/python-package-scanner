@@ -75,7 +75,9 @@ class TestCli:
 
     def test_missing_uv_lock(self, tmp_path, capsys):
         exit_code = main(["--mode", "uv", "--path", str(tmp_path)])
-        assert exit_code == 1
+        # Scanner-error path uses exit 2 so the action can distinguish
+        # "scanner failed" from "vulns found" (exit 1).
+        assert exit_code == 2
         err = capsys.readouterr().err
         assert "uv.lock not found" in err
 
@@ -91,7 +93,7 @@ class TestCli:
     def test_malformed_uv_lock(self, tmp_path, capsys):
         (tmp_path / "uv.lock").write_text("not valid toml {{{{")
         exit_code = main(["--mode", "uv", "--path", str(tmp_path)])
-        assert exit_code == 1
+        assert exit_code == 2
         err = capsys.readouterr().err
         assert "malformed uv.lock" in err
 
