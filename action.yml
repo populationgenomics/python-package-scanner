@@ -50,6 +50,11 @@ runs:
       with:
         python-version: ">=3.11"
 
+    - name: Install scanner dependencies
+      shell: bash
+      run: |
+        python -m pip install --quiet --disable-pip-version-check 'packaging>=23.0'
+
     - name: Run scanner
       id: scan
       shell: bash
