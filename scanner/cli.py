@@ -15,6 +15,16 @@ from scanner.report import build_findings, generate_markdown
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Entry point. Exit codes:
+
+    - 0: scan completed, no active vulnerabilities.
+    - 1: scan completed, active vulnerabilities found.
+    - 2: scanner failed (bad input, malformed lockfile, uncaught error).
+
+    Distinct codes let downstream tooling (the composite action) tell apart
+    "the project has vulnerabilities" from "the scanner crashed and produced
+    no useful output" — without parsing the report.
+    """
     parser = argparse.ArgumentParser(
         prog="python-package-scanner",
         description="Scan Python dependencies for vulnerabilities with dependency chain tracing",
@@ -79,12 +89,12 @@ def main(argv: list[str] | None = None) -> int:
         lock_path = project_path / "uv.lock"
         if not lock_path.exists():
             print(f"Error: uv.lock not found at {lock_path}", file=sys.stderr)
-            return 1
+            return 2
         try:
             graph = parse_uv_lock(lock_path)
         except tomllib.TOMLDecodeError as exc:
             print(f"Error: malformed uv.lock: {exc}", file=sys.stderr)
-            return 1
+            return 2
     else:
         req_path = project_path / "requirements.txt"
         graph = parse_pip_environment(
@@ -151,4 +161,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:
+        # Surface unexpected errors as exit 2 so downstream tooling can tell
+        # them apart from "vulnerabilities found" (exit 1). Without this,
+        # any uncaught exception would propagate as Python's default exit 1
+        # and look like a successful scan with vulns.
+        print(f"Error: scanner crashed: {exc}", file=sys.stderr)
+        sys.exit(2)

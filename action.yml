@@ -89,13 +89,27 @@ runs:
           cat "$RUNNER_TEMP/scanner_stderr.txt" >&2
         fi
 
-        # Count vulns from exit code (0 = clean, 1 = vulns found)
-        if [ $EXIT_CODE -eq 0 ]; then
-          VULN_COUNT=0
-        else
-          # Extract count from report header "Found N vulnerabilities"
-          VULN_COUNT=$(echo "$REPORT" | grep -oP 'Found \K\d+' || echo "0")
-        fi
+        # Scanner exit codes: 0=clean, 1=vulns found, 2+=scanner error.
+        # We also validate the report shape on exit 1 — if Python crashed at
+        # import time (e.g. missing dep) it exits 1 with no useful output,
+        # which would otherwise look identical to "vulns found" and silently
+        # pass through as VULN_COUNT=0.
+        case $EXIT_CODE in
+          0)
+            VULN_COUNT=0
+            ;;
+          1)
+            if ! echo "$REPORT" | grep -q "Vulnerability Audit"; then
+              echo "::error::scanner exited 1 but produced no recognisable report — likely crashed before main() ran"
+              exit 1
+            fi
+            VULN_COUNT=$(echo "$REPORT" | grep -oP 'Found \K\d+' || echo "0")
+            ;;
+          *)
+            echo "::error::scanner failed (exit $EXIT_CODE)"
+            exit 1
+            ;;
+        esac
 
         # Set outputs
         echo "vuln-count=$VULN_COUNT" >> "$GITHUB_OUTPUT"
