@@ -36,6 +36,11 @@ class DependencyGraph:
     # dep, e.g. {"hail": "~=0.2.137"}. Preserved separately so they survive the
     # removal of root packages from `packages`.
     root_specs: dict[str, str] = field(default_factory=dict)
+    # Lower bound of the project's requires-python (e.g. "3.10"). Used as the
+    # python_version for marker evaluation when filtering requires_dist
+    # variants — picks the most permissive single value across the supported
+    # range, so markers like `python_version < "3.10"` correctly drop out.
+    python_version: str = ""
 
     def trace_chain(self, package: str) -> list[str]:
         """Find shortest path from a direct dependency to the given package.
@@ -100,6 +105,8 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
     lock_path = Path(lock_path)
     with lock_path.open("rb") as f:
         data = tomllib.load(f)
+
+    python_version = _lower_bound_python_version(data.get("requires-python"))
 
     packages: dict[str, PackageInfo] = {}
     root_names: set[str] = set()
@@ -190,7 +197,22 @@ def parse_uv_lock(lock_path: Path | str) -> DependencyGraph:
         direct_deps=direct_deps,
         dev_deps=dev_deps,
         root_specs=root_specs,
+        python_version=python_version,
     )
+
+
+_REQUIRES_PYTHON_RE = re.compile(r"(?:>=|~=)\s*(\d+\.\d+)")
+
+
+def _lower_bound_python_version(requires_python: str | None) -> str:
+    """Extract the lower bound major.minor from a PEP 440 requires-python string.
+
+    e.g. ">=3.10,<3.12" -> "3.10". Returns "" if absent or unparseable.
+    """
+    if not requires_python:
+        return ""
+    m = _REQUIRES_PYTHON_RE.search(requires_python)
+    return m.group(1) if m else ""
 
 
 # ---------------------------------------------------------------------------
@@ -262,10 +284,15 @@ def parse_pip_environment(
         for dep in info.dependencies:
             reverse_map.setdefault(dep, []).append(name)
 
+    import sys
+
+    python_version = f"{sys.version_info.major}.{sys.version_info.minor}"
+
     return DependencyGraph(
         packages=packages,
         reverse_map=reverse_map,
         direct_deps=direct_deps,
+        python_version=python_version,
     )
 
 

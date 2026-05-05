@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from scanner.constraints import parse_requires_dist
+from scanner.constraints import (
+    build_marker_env,
+    filter_requires_dist,
+    parse_requires_dist,
+)
 
 
 class TestParseRequiresDist:
@@ -50,3 +54,71 @@ class TestParseRequiresDist:
         # An empty or weird string returns empty name
         name, _, _ = parse_requires_dist("")
         assert name == ""
+
+
+class TestFilterRequiresDist:
+    """Tests for marker-aware filtering of requires_dist entries.
+
+    Locks in the fix for the bug where botocore's two urllib3 variants
+    (one for python<3.10, one for python>=3.10) collapsed via setdefault
+    into the wrong-marker variant, surfacing a phantom blocker.
+    """
+
+    def test_picks_matching_marker_variant(self):
+        env = build_marker_env(python_version="3.11")
+        deps = filter_requires_dist(
+            [
+                'urllib3>=1.25.4,<1.27 ; python_version < "3.10"',
+                'urllib3>=1.25.4,<3 ; python_version >= "3.10"',
+            ],
+            env,
+        )
+        # On py3.11 the >=3.10 variant applies; the <3.10 variant must be
+        # dropped so it cannot masquerade as a blocker.
+        assert deps == {"urllib3": ">=1.25.4,<3"}
+
+    def test_picks_old_python_variant_on_old_python(self):
+        env = build_marker_env(python_version="3.9")
+        deps = filter_requires_dist(
+            [
+                'urllib3>=1.25.4,<1.27 ; python_version < "3.10"',
+                'urllib3>=1.25.4,<3 ; python_version >= "3.10"',
+            ],
+            env,
+        )
+        assert deps == {"urllib3": ">=1.25.4,<1.27"}
+
+    def test_skips_extras_only(self):
+        env = build_marker_env(python_version="3.11")
+        deps = filter_requires_dist(
+            ["pillow ; extra == 'bokeh'", "numpy>=1.20"],
+            env,
+        )
+        assert deps == {"numpy": ">=1.20"}
+
+    def test_unmarked_entries_pass_through(self):
+        env = build_marker_env(python_version="3.11")
+        deps = filter_requires_dist(["requests>=2.0", "urllib3<3"], env)
+        assert deps == {"requests": ">=2.0", "urllib3": "<3"}
+
+    def test_unparseable_marker_kept_conservatively(self):
+        env = build_marker_env(python_version="3.11")
+        # An unrecognised marker variable shouldn't silently drop the entry.
+        deps = filter_requires_dist(
+            ["weirdpkg>=1.0 ; bogus_var == 'xyz'"],
+            env,
+        )
+        assert deps == {"weirdpkg": ">=1.0"}
+
+
+class TestBuildMarkerEnv:
+    def test_overrides_python_version(self):
+        env = build_marker_env(python_version="3.10")
+        assert env["python_version"] == "3.10"
+        assert env["python_full_version"] == "3.10.0"
+
+    def test_no_python_version_uses_default(self):
+        env = build_marker_env()
+        # Whatever the running interpreter reports — just ensure the key
+        # exists so Marker.evaluate() never sees an undefined variable.
+        assert "python_version" in env

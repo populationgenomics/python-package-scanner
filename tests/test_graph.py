@@ -9,6 +9,7 @@ import pytest
 from scanner.graph import (
     DependencyGraph,
     PackageInfo,
+    _lower_bound_python_version,
     _parse_requirements_txt,
     normalize,
     parse_uv_lock,
@@ -37,6 +38,25 @@ class TestNormalize:
 
     def test_consecutive_separators(self):
         assert normalize("a--b__c..d") == "a-b-c-d"
+
+
+class TestLowerBoundPythonVersion:
+    def test_simple(self):
+        assert _lower_bound_python_version(">=3.10") == "3.10"
+
+    def test_compound(self):
+        assert _lower_bound_python_version(">=3.10,<3.12") == "3.10"
+
+    def test_compatible_release(self):
+        assert _lower_bound_python_version("~=3.11") == "3.11"
+
+    def test_empty(self):
+        assert _lower_bound_python_version(None) == ""
+        assert _lower_bound_python_version("") == ""
+
+    def test_unparseable(self):
+        # No ">=" / "~=" anchor — give up.
+        assert _lower_bound_python_version("==3.11") == ""
 
 
 # ---------------------------------------------------------------------------
