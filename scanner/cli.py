@@ -8,7 +8,7 @@ import sys
 import tomllib
 from pathlib import Path
 
-from scanner.constraints import fetch_constraints
+from scanner.constraints import build_marker_env, fetch_constraints
 from scanner.graph import normalize, parse_pip_environment, parse_uv_lock
 from scanner.osv import query_osv
 from scanner.report import build_findings, generate_markdown
@@ -107,8 +107,14 @@ def main(argv: list[str] | None = None) -> int:
     for err in osv_results.errors:
         print(f"Warning: {err}", file=sys.stderr)
 
-    # Build findings and generate report
-    constraints_provider = None if args.no_constraints else fetch_constraints
+    # Build findings and generate report. Wrap fetch_constraints so the
+    # provider signature stays (parents) -> map while still passing the
+    # project-specific marker environment through.
+    if args.no_constraints:
+        constraints_provider = None
+    else:
+        env = build_marker_env(graph.python_version)
+        constraints_provider = lambda parents: fetch_constraints(parents, env=env)  # noqa: E731
     findings = build_findings(
         osv_results.vulnerabilities,
         graph,

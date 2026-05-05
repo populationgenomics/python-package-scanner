@@ -8,6 +8,14 @@ fetch ``requires_dist`` from PyPI for the parents of vulnerable packages.
 
 This is best-effort: any fetch failure causes the parent's spec to be omitted
 rather than raising, so a flaky network never makes the scanner fail.
+
+Marker evaluation: a parent's ``requires_dist`` may list the same child several
+times under different environment markers (e.g. one variant for
+``python_version < "3.10"`` and another for ``python_version >= "3.10"``). Only
+the variant whose marker matches the project's environment is relevant — if we
+kept all variants we would surface phantom blockers. We evaluate markers using
+``packaging.markers.Marker`` against an environment built from the project's
+``requires-python`` and the running interpreter's other attributes.
 """
 
 from __future__ import annotations
@@ -18,6 +26,8 @@ import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
+
+from packaging.markers import Marker, default_environment
 
 from scanner.graph import normalize
 
@@ -59,20 +69,75 @@ ConstraintsMap = dict[tuple[str, str], dict[str, str]]
 ConstraintsProvider = Callable[[list[tuple[str, str]]], ConstraintsMap]
 
 
-def fetch_constraints(parents: list[tuple[str, str]]) -> ConstraintsMap:
+def build_marker_env(python_version: str | None = None) -> dict[str, str]:
+    """Build a marker environment for evaluating ``requires_dist`` markers.
+
+    Starts from ``packaging.markers.default_environment()`` (the running
+    interpreter) and overrides ``python_version`` / ``python_full_version``
+    when a project-level value is supplied.
+    """
+    env = dict(default_environment())
+    if python_version:
+        env["python_version"] = python_version
+        env["python_full_version"] = f"{python_version}.0"
+    return env
+
+
+def filter_requires_dist(
+    requires_dist: list[str], env: dict[str, str]
+) -> dict[str, str]:
+    """Resolve a parent's ``requires_dist`` list to a single spec per child.
+
+    Drops entries whose marker excludes the given env (so multi-variant deps
+    like urllib3-under-different-pythons collapse to the applicable one) and
+    extras-only entries (rarely installed in the lockfile's runtime closure).
+    """
+    deps: dict[str, str] = {}
+    for req_str in requires_dist:
+        child, spec, marker = parse_requires_dist(req_str)
+        if not child:
+            continue
+        if marker and "extra ==" in marker:
+            continue
+        if marker and not _marker_matches(marker, env):
+            continue
+        deps.setdefault(child, spec)
+    return deps
+
+
+def _marker_matches(marker_str: str, env: dict[str, str]) -> bool:
+    """Return True if the marker is satisfied by ``env``.
+
+    Conservative on parse/evaluate failure: returns True so we don't silently
+    drop entries with unrecognised markers.
+    """
+    try:
+        return Marker(marker_str).evaluate(environment=env)
+    except Exception:
+        return True
+
+
+def fetch_constraints(
+    parents: list[tuple[str, str]],
+    env: dict[str, str] | None = None,
+) -> ConstraintsMap:
     """Fetch ``requires_dist`` from PyPI for each (name, version) parent.
 
     Concurrent. Failures are silently dropped from the result. Inputs are
-    deduplicated.
+    deduplicated. ``env`` is the marker environment used to filter
+    multi-variant deps; defaults to the running interpreter.
     """
     unique = list({p for p in parents if p[0] and p[1]})
     if not unique:
         return {}
 
+    if env is None:
+        env = build_marker_env()
+
     out: ConstraintsMap = {}
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = {
-            ex.submit(_fetch_one, name, version): (name, version)
+            ex.submit(_fetch_one, name, version, env): (name, version)
             for name, version in unique
         }
         for fut in as_completed(futures):
@@ -84,7 +149,7 @@ def fetch_constraints(parents: list[tuple[str, str]]) -> ConstraintsMap:
     return out
 
 
-def _fetch_one(name: str, version: str) -> dict[str, str]:
+def _fetch_one(name: str, version: str, env: dict[str, str]) -> dict[str, str]:
     url = PYPI_URL.format(name=name, version=version)
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     data: dict | None = None
@@ -98,17 +163,7 @@ def _fetch_one(name: str, version: str) -> dict[str, str]:
                 continue
             raise
 
-    deps: dict[str, str] = {}
     if data is None:
-        return deps
-    for req_str in data.get("info", {}).get("requires_dist") or []:
-        child, spec, marker = parse_requires_dist(req_str)
-        if not child:
-            continue
-        # Skip extras-only deps like ``pillow ; extra == 'bokeh'`` — they only
-        # apply when the parent is installed with that extra, which is rare in
-        # the runtime closure that uv.lock represents.
-        if marker and "extra ==" in marker:
-            continue
-        deps.setdefault(child, spec)
-    return deps
+        return {}
+    requires_dist = data.get("info", {}).get("requires_dist") or []
+    return filter_requires_dist(requires_dist, env)
